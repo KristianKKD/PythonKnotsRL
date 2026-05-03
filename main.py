@@ -1,30 +1,21 @@
 from knots import *
-import math
 import random
 
-def choose_agent_move(state:State, greed:float) -> State:
+# BUG: AI DOESN'T WIN AS FAST AS POSSIBLE
+# BUG: AI DOESN'T LEARN TO BLOCK OPPONENT'S WINNING MOVES
+
+
+def choose_reinforced_move(state:State, greed:float) -> State:
     highest_value_state = max(state.next_states, key=lambda s: s.value)
     greed_step = random.random() < greed
     if greed_step: # Exploitation step
         return highest_value_state
     else: # Exploration step
-        valid_states = [s for s in state.next_states if s.value > REWARD_LOSS] # Don't choose losing states
-        return random.choice(valid_states)
+        return choose_random_move(state)
 
-def choose_random_empty(state:State, player:int=PLAYER_B) -> State:
-    # Choose a random empty position on the board
-    next_position_indices = [i for i, cell in enumerate(state.board) if cell == EMPTY]
-    choice = random.choice(next_position_indices)
-
-    # Create a copy to find in the state tree
-    find_board = state.board.copy()
-    find_board[choice] = player  # Place the specified player's move on the board
-
-    # Find the board in the state tree
-    found_board = next((s for s in state_tree if s.board == find_board), None)
-    if found_board is None:
-        raise ValueError("Board state not found in state tree")
-    return found_board
+def choose_random_move(state:State) -> State:
+    choice = random.choice(list(state.next_states.values()))
+    return choice
 
 def assign_rewards(epoch_states:list[State], player:int):
     winner = check_winner(epoch_states[-1].board)
@@ -33,50 +24,68 @@ def assign_rewards(epoch_states:list[State], player:int):
         state.value += (reward - state.value) * LEARNING_RATE
         state.value = max(min(state.value, REWARD_WIN), REWARD_LOSS)  # Ensure value stays within bounds
 
+def play(initial_state:State, greed:float, show:bool=False) -> list[State]:
+    state = initial_state
+    epoch_states = []
+    while True:
+        state = choose_reinforced_move(state, greed)
+        winner = check_winner(state.board)
+        epoch_states.append(state)
+        
+        if winner == EMPTY:
+            state = choose_random_move(state)
+            winner = check_winner(state.board)
+            epoch_states.append(state)
+
+        if winner != EMPTY:
+            break
+
+    if show:
+        print("AGENT == " + (PLAYER_A_STR if AGENT == PLAYER_A else PLAYER_B_STR))
+        print_board(initial_state.board)
+        for state in epoch_states:
+            print_board(state.board)
+
+    return epoch_states
+
 # Train
 AGENT = PLAYER_A
 OPPONENT = PLAYER_B
 
 STARTING_PLAYER = PLAYER_A
-EPOCHS = 100
-STARTING_GREED = 0.5
-LEARNING_RATE = 0.1
+EPOCHS = 10000
+MAX_GREED = 0.7
+LEARNING_RATE = 0.01
 
-empty_board = [EMPTY] * BOARD_SIZE
-state_tree:list[State] = get_possible_states(empty_board, STARTING_PLAYER, depth=BOARD_SIZE)
-starting_state = state_tree[0].board
+empty_state = State([EMPTY] * BOARD_SIZE)
+state_tree:list[State] = get_possible_states(empty_state.board, STARTING_PLAYER, depth=BOARD_SIZE, parent_state=empty_state)
 
 for epoch in range(EPOCHS):
     if epoch % (EPOCHS // 10) == 0: # Every 10% of epochs, print progress
         print(f"Epoch {epoch+1}/{EPOCHS}")
 
-    greed = STARTING_GREED * (0.95 ** epoch)  # Decrease greed over time
-    state = starting_state
-    epoch_states = []
-    while True:
-        state = choose_agent_move(state, greed)
-        winner = check_winner(state)
-        
-        if winner == EMPTY:
-            state = choose_random_empty(state)
-            winner = check_winner(state)
-        
-        epoch_states.append(state)
-        if winner != EMPTY:
-            assign_rewards(epoch_states, AGENT)
+    greed = MAX_GREED * epoch / EPOCHS  # Decrease greed over time
+    
+    random_starting_state = random.choice(list(empty_state.next_states.values()))
+    state = random_starting_state
+
+    epoch_states = play(state, greed)
+
+    assign_rewards(epoch_states, AGENT)
 
 # Verify
-while True:
-    state = choose_agent_move(state, 1)
-    print_board(state.board)
-    
-    winner = check_winner(state)
-    if winner == EMPTY:
-        state = choose_random_empty(state)
-        print_board(state.board)
-        winner = check_winner(state)
+VERIFICATION_EPOCHS = 100
+wins = 0
 
-    if winner != EMPTY:
-        print(f"Winner: {'Agent' if winner == AGENT else 'Opponent' if winner == OPPONENT else 'Draw'}")
-        break
-    
+for i in range(VERIFICATION_EPOCHS):
+    random_starting_state = random.choice(list(empty_state.next_states.values()))
+    state = random_starting_state
+
+    epoch_states = play(state, 1, show=(i == VERIFICATION_EPOCHS - 1))
+
+    winner = check_winner(epoch_states[-1].board)
+    if winner == AGENT:
+        wins += 1
+
+print(f"Winner: {'Agent' if winner == AGENT else 'Opponent' if winner == OPPONENT else 'Draw'}")
+print(f"Agent win rate: {wins / VERIFICATION_EPOCHS:.2%}")

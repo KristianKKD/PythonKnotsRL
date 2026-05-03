@@ -9,13 +9,18 @@ BOARD_SIZE = 9
 
 REWARD_WIN = 1.0
 REWARD_LOSS = 0.0
+REWARD_DRAW = 0.01
 REWARD_WIP = 0.5
+
+PLAYER_A_STR = "A"
+PLAYER_B_STR = "B"
 
 class State:
     def __init__(self, board:list[int], check_for_winner:bool=False, parent_state=None):
+        self.id = hash(tuple(board))
         self.board = board
         self.value = 0.5
-        self.next_states: list[State] = []
+        self.next_states: dict[State, State] = {}
         self.parent_state = parent_state
         if check_for_winner:
             self.value = self._calculate_value()
@@ -24,34 +29,56 @@ class State:
         winner = check_winner(self.board)
         if winner == PLAYER_A:
             return REWARD_WIN
-        elif winner == PLAYER_B or winner == DRAW:
+        elif winner == PLAYER_B:
             return REWARD_LOSS
+        elif winner == DRAW:
+            return REWARD_DRAW
         else:
             return REWARD_WIP
+        
+    def __hash__(self):
+        return self.id
 
-def get_possible_states(board:list[int], player:int, depth:int=1, parent_state:State=None) -> list[State]:
+    def __eq__(self, other):
+        if not isinstance(other, State):
+            return NotImplemented
+        return self.board == other.board
+
+def get_possible_states(board:list[int], player:int, depth:int=1, parent_state:State=None, unique_states:dict[State, State]=None) -> list[State]:
+    if unique_states is None:
+        unique_states: dict[State, State] = {}
+
     winner = check_winner(board)
     if winner != EMPTY:
         return []  # No next states if the game is already won or drawn
-    
-    # Save the states
+
     next_position_indices = [i for i, cell in enumerate(board) if cell == EMPTY]
-    states = []
+
     for perm in next_position_indices:
         new_board = board.copy()
         new_board[perm] = player
-        states.append(State(new_board.copy(), check_for_winner=True, parent_state=parent_state))
-        if parent_state is not None:
-            parent_state.next_states.append(states[-1])
+        state = State(new_board.copy(), check_for_winner=True, parent_state=parent_state)
 
-    # Recursively get further states if depth > 0
-    if depth > 0:
-        further_states = states
-        for state in states:
-            further_states += get_possible_states(state.board, int(not player), depth - 1, state)
-        return set(further_states)
+        state_seen = state in unique_states
+
+        if state in unique_states:
+            state = unique_states[state] # Replace with existing explored alias
+        else:
+            unique_states[state] = state
+
+        if parent_state is not None:
+            parent_state.next_states[state] = state
+
+        # Recursively get further states if depth > 0
+        if depth > 0 and state.value == REWARD_WIP and not state_seen:
+            get_possible_states(board=state.board,
+                                player=int(not player),
+                                depth=depth - 1,
+                                parent_state=state,
+                                unique_states=unique_states # data is saved to here
+                                )
     
-    return set(states)
+    return list(unique_states)
 
 def check_winner(board):
     PLAYER = -2
@@ -83,7 +110,8 @@ def check_winner(board):
     return EMPTY
 
 def print_board(board):
-    symbols = {EMPTY: '.', PLAYER_A: 'X', PLAYER_B: 'O'}
+    symbols = {EMPTY: '.', PLAYER_A: PLAYER_A_STR, PLAYER_B: PLAYER_B_STR}
     board_step = math.sqrt(BOARD_SIZE)
     for i in range(0, BOARD_SIZE, int(board_step)):
         print(' '.join(symbols[board[j]] for j in range(i, i + int(board_step))))
+    print("-" * 10)
